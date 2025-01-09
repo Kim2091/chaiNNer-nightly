@@ -57,9 +57,9 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file_glob: true
           file: ./chaiNNer/out/make/**
-          tag: nightly-$(date -u +%Y%m%d%H%M)
+          tag: manual-release
           overwrite: true
-          release_name: Nightly Build $(date -u)
+          release_name: Manual Build Release
           prerelease: true
           body: |
             Build information:
