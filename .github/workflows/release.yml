@@ -1,116 +1,40 @@
-# This is a basic workflow to help you get started with Actions
-
-name: Release
+# Modified workflow for manual release without secrets
+name: Manual Release
 
 # Controls when the workflow will run
 on:
-  # Triggers the workflow on push with a tag
-  push:
-    tags:
-      - "v*"
-  # nightly
-  schedule:
-    # * is a special character in YAML so you have to quote this string
-    - cron: "0 23 * * *"
-
-  # Triggers on creation of a release
-  # release:
-  #     types:
-  #         - created
-
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  setup:
-    permissions:
-      contents: none
+  build-and-release:
     runs-on: ubuntu-latest
-    outputs:
-      COMMITS: ${{ steps.get_commits.outputs.COMMITS }}
+
     steps:
-      - name: Checkout main
+      - name: Checkout repository
         uses: actions/checkout@v2
         with:
           fetch-depth: 0
       - name: Checkout submodules
         run: git submodule update --init --recursive --remote
-      - name: Get commits last 24 hours
-        id: get_commits
-        run: cd ./chaiNNer && echo ::set-output name=COMMITS::$(git rev-list --no-merges HEAD  --not $(git rev-list -n1 --before="24 hours" --first-parent HEAD))
 
-  release:
-    needs: [setup]
-    if: ${{ needs.setup.outputs.COMMITS }}
-    runs-on: ${{ matrix.os }}
-
-    strategy:
-      matrix:
-        os: [macos-13, ubuntu-latest, windows-latest]
-
-    steps:
-      - name: Get current time
-        uses: josStorer/get-current-time@v2.0.1
-        id: current-time
-        with:
-          format: YYYY-MM-DD
-      - name: Checkout main
-        uses: actions/checkout@v2
-        with:
-          fetch-depth: 0
-      - name: Checkout submodules
-        run: git submodule update --init --recursive --remote
-      - uses: actions/setup-node@master
+      - name: Install Node.js
+        uses: actions/setup-node@v3
         with:
           node-version: 16
-      - name: install setuptools (macos)
-        if: matrix.os == 'macos-13'
-        run: python3 -m pip install setuptools
+
       - name: Install dependencies
-        run: cd ./chaiNNer && npm ci --force
-      - name: Install necessary FlatPak tools
-        if: ${{ matrix.os == 'ubuntu-latest' }}
-        run: |
-          sudo apt update && sudo apt install flatpak flatpak-builder elfutils
-      - name: Increase patch version
-        shell: bash
         run: |
           cd ./chaiNNer
-          npm version patch --no-git-tag-version
-          PKG_VERSION=$(npm pkg get version --workspaces=false | tr -d \")-nightly.${{ steps.current-time.outputs.formattedTime }}
-          npm version $PKG_VERSION --no-git-tag-version
-      - name: macOS certificate
-        if: matrix.os == 'macos-13'
-        env:
-            APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-            APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        run: |
-            KEY_CHAIN=build.keychain
-            CERTIFICATE_P12=certificate.p12
-            echo $APPLE_CERTIFICATE | base64 --decode > $CERTIFICATE_P12
-            security create-keychain -p actions $KEY_CHAIN
-            security default-keychain -s $KEY_CHAIN
-            security unlock-keychain -p actions $KEY_CHAIN
-            security import $CERTIFICATE_P12 -k $KEY_CHAIN -P $APPLE_CERTIFICATE_PASSWORD -T /usr/bin/codesign;
-            security set-key-partition-list -S apple-tool:,apple: -s -k actions $KEY_CHAIN
-            rm -fr *.p12
-      - name: Build nightly release
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_SIGNING_ID: ${{ secrets.APPLE_SIGNING_ID }}
-        shell: bash
+          npm ci --force
+
+      - name: Build project
         run: |
           cd ./chaiNNer
-          if [[ "${{ matrix.os }}" != "macos-13" ]]; then
-              npm run make
-          else
-              npm run make -- --arch=universal
-          fi
-      - name: Set file name env vars
-        id: step_one
+          npm run make
+
+      - name: Set file name environment variables
+        id: set_filenames
         shell: bash
         run: |
           echo "ZIP=$(find ./chaiNNer/out/make/ -iname *.zip)" >> $GITHUB_ENV
@@ -118,49 +42,25 @@ jobs:
           echo "DEB=$(find ./chaiNNer/out/make/ -iname *.deb)" >> $GITHUB_ENV
           echo "RPM=$(find ./chaiNNer/out/make/ -iname *.rpm)" >> $GITHUB_ENV
           echo "EXE=$(find ./chaiNNer/out/make/ -iname *.exe)" >> $GITHUB_ENV
-          echo "NUPKG=$(find ./chaiNNer/out/make/ -iname *.nupkg)" >> $GITHUB_ENV
-      - name: Rename zip assets
-        if: ${{ env.ZIP }}
-        run: mv ${{ env.ZIP }} ./chaiNNer/out/make/chaiNNer-${{ matrix.os }}-nightly.${{ steps.current-time.outputs.formattedTime }}.zip
-      - name: Rename dmg assets
-        if: ${{ env.DMG }}
-        run: mv ${{ env.DMG }} ./chaiNNer/out/make/chaiNNer-${{ matrix.os }}-nightly.${{ steps.current-time.outputs.formattedTime }}.dmg
-      - name: Rename deb assets
-        if: ${{ env.DEB }}
-        run: mv ${{ env.DEB }} ./chaiNNer/out/make/chaiNNer-${{ matrix.os }}-nightly.${{ steps.current-time.outputs.formattedTime }}.deb
-      - name: Rename rpm assets
-        if: ${{ env.RPM }}
-        run: mv ${{ env.RPM }} ./chaiNNer/out/make/chaiNNer-${{ matrix.os }}-nightly.${{ steps.current-time.outputs.formattedTime }}.rpm
-      - name: Rename exe assets
-        if: ${{ env.EXE }}
-        run: mv "${{ env.EXE }}" "./chaiNNer/out/make/chaiNNer-${{ matrix.os }}-nightly.${{ steps.current-time.outputs.formattedTime }}.exe"
-      - name: Delete nupkg assets
-        if: ${{ env.NUPKG }}
-        run: rm ${{ env.NUPKG }}
-      - name: Get commit history (past 24 hours)
-        id: commit_history
+
+      - name: Rename assets for release
         run: |
-          cd ./chaiNNer
-          echo "Built on ${{ steps.current-time.outputs.formattedTime }}" > history.txt
-          git log --no-merges HEAD  --not $(git rev-list -n1 --before="24 hours" --first-parent HEAD) --pretty=format:"[%h](https://github.com/chaiNNer-org/chaiNNer/commit/%H) - %s (%cr) <%an>" >> history.txt
-      - name: Read release.md and use it as a body of new release
-        id: read_release
-        shell: bash
-        run: |
-          r=$(cat ./chaiNNer/history.txt)
-          r="${r//'%'/'%25'}"                               # Multiline escape sequences for %
-          r="${r//$'\n'/'%0A'}"                             # Multiline escape sequences for '\n'
-          r="${r//$'\r'/'%0D'}"                             # Multiline escape sequences for '\r'
-          echo "::set-output name=RELEASE_BODY::$r"
-      - name: Upload new release assets
+          if [[ -n "$ZIP" ]]; then mv "$ZIP" ./chaiNNer/out/make/chaiNNer-nightly.zip; fi
+          if [[ -n "$DMG" ]]; then mv "$DMG" ./chaiNNer/out/make/chaiNNer-nightly.dmg; fi
+          if [[ -n "$DEB" ]]; then mv "$DEB" ./chaiNNer/out/make/chaiNNer-nightly.deb; fi
+          if [[ -n "$RPM" ]]; then mv "$RPM" ./chaiNNer/out/make/chaiNNer-nightly.rpm; fi
+          if [[ -n "$EXE" ]]; then mv "$EXE" ./chaiNNer/out/make/chaiNNer-nightly.exe; fi
+
+      - name: Create a new release
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file_glob: true
           file: ./chaiNNer/out/make/**
-          tag: ${{ steps.current-time.outputs.formattedTime }}
+          tag: nightly-$(date -u +%Y%m%d%H%M)
           overwrite: true
+          release_name: Nightly Build $(date -u)
+          prerelease: true
           body: |
-            ${{ steps.read_release.outputs.RELEASE_BODY }}
-          release_name: Nightly builds from ${{ steps.current-time.outputs.formattedTime }}
-          prerelease: false
+            Build information:
+            Built on $(date -u)
