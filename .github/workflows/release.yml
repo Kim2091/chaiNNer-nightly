@@ -1,19 +1,16 @@
-# Modified workflow for manual release without secrets
-name: Manual Release
+name: Release
 
-# Controls when the workflow will run
 on:
+  # Triggers the workflow on push
+  push:
+    branches:
+      - main
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
 jobs:
-  build-and-release:
-    runs-on: ${{ matrix.os }}
-
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-
+  setup:
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
@@ -22,49 +19,94 @@ jobs:
       - name: Checkout submodules
         run: git submodule update --init --recursive --remote
 
-      - name: Install Node.js
-        uses: actions/setup-node@v3
+  release:
+    needs: [setup]
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Get current time
+        uses: josStorer/get-current-time@v2.0.1
+        id: current-time
+        with:
+          format: YYYY-MM-DD
+
+      - name: Checkout repository
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Checkout submodules
+        run: git submodule update --init --recursive --remote
+
+      - uses: actions/setup-node@master
         with:
           node-version: 16
 
       - name: Install dependencies
         run: |
-          cd ./chaiNNer
-          npm ci --force
+          cd ./chaiNNer && npm ci --force
 
-      - name: Build project
+      - name: Install necessary FlatPak tools (Linux only)
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: |
+          sudo apt update && sudo apt install flatpak flatpak-builder elfutils
+
+      - name: Increase patch version
+        shell: bash
+        run: |
+          cd ./chaiNNer
+          npm version patch --no-git-tag-version
+          PKG_VERSION=$(npm pkg get version --workspaces=false | tr -d ")-nightly.${{ steps.current-time.outputs.formattedTime }}
+          npm version $PKG_VERSION --no-git-tag-version
+
+      - name: Build nightly release
+        shell: bash
         run: |
           cd ./chaiNNer
           npm run make
 
-      - name: Set file name environment variables
-        id: set_filenames
+      - name: Set file name env vars
+        id: step_one
         shell: bash
         run: |
           echo "ZIP=$(find ./chaiNNer/out/make/ -iname *.zip)" >> $GITHUB_ENV
-          echo "DMG=$(find ./chaiNNer/out/make/ -iname *.dmg)" >> $GITHUB_ENV
           echo "DEB=$(find ./chaiNNer/out/make/ -iname *.deb)" >> $GITHUB_ENV
           echo "RPM=$(find ./chaiNNer/out/make/ -iname *.rpm)" >> $GITHUB_ENV
           echo "EXE=$(find ./chaiNNer/out/make/ -iname *.exe)" >> $GITHUB_ENV
 
-      - name: Rename assets for release
-        run: |
-          if [[ -n "$ZIP" ]]; then mv "$ZIP" ./chaiNNer/out/make/chaiNNer-nightly.zip; fi
-          if [[ -n "$DMG" ]]; then mv "$DMG" ./chaiNNer/out/make/chaiNNer-nightly.dmg; fi
-          if [[ -n "$DEB" ]]; then mv "$DEB" ./chaiNNer/out/make/chaiNNer-nightly.deb; fi
-          if [[ -n "$RPM" ]]; then mv "$RPM" ./chaiNNer/out/make/chaiNNer-nightly.rpm; fi
-          if [[ -n "$EXE" ]]; then mv "$EXE" ./chaiNNer/out/make/chaiNNer-nightly.exe; fi
+      - name: Rename zip assets
+        if: ${{ env.ZIP }}
+        run: mv ${{ env.ZIP }} ./chaiNNer/out/make/chaiNNer-${{ matrix.os }}-nightly.${{ steps.current-time.outputs.formattedTime }}.zip
 
-      - name: Create a new release
+      - name: Rename deb assets
+        if: ${{ env.DEB }}
+        run: mv ${{ env.DEB }} ./chaiNNer/out/make/chaiNNer-${{ matrix.os }}-nightly.${{ steps.current-time.outputs.formattedTime }}.deb
+
+      - name: Rename rpm assets
+        if: ${{ env.RPM }}
+        run: mv ${{ env.RPM }} ./chaiNNer/out/make/chaiNNer-${{ matrix.os }}-nightly.${{ steps.current-time.outputs.formattedTime }}.rpm
+
+      - name: Rename exe assets
+        if: ${{ env.EXE }}
+        run: mv "${{ env.EXE }}" "./chaiNNer/out/make/chaiNNer-${{ matrix.os }}-nightly.${{ steps.current-time.outputs.formattedTime }}.exe"
+
+      - name: Delete nupkg assets
+        if: ${{ env.NUPKG }}
+        run: rm ${{ env.NUPKG }}
+
+      - name: Upload new release assets
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file_glob: true
           file: ./chaiNNer/out/make/**
-          tag: manual-release2
+          tag: manual-tag
           overwrite: true
-          release_name: Manual Build Release
-          prerelease: true
           body: |
-            Build information:
-            Built on $(date -u)
+            nightly release
+          release_name: Nightly builds from ${{ steps.current-time.outputs.formattedTime }}
+          prerelease: false
