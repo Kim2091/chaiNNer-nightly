@@ -8,7 +8,11 @@ on:
 
 jobs:
   build-and-release:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
 
     steps:
       - name: Checkout repository
@@ -57,7 +61,7 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file_glob: true
           file: ./chaiNNer/out/make/**
-          tag: manual-release
+          tag: manual-release2
           overwrite: true
           release_name: Manual Build Release
           prerelease: true
